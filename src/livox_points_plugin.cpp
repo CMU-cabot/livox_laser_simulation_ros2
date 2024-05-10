@@ -12,7 +12,7 @@
 #include "ros2_livox/livox_points_plugin.h"
 #include "ros2_livox/csv_reader.hpp"
 #include "ros2_livox/livox_ode_multiray_shape.h"
-#include <livox_ros_driver2/msg/custom_msg.hpp>
+#include <livox_interfaces/msg/custom_msg.hpp>
 
 namespace gazebo
 {
@@ -74,7 +74,7 @@ namespace gazebo
         // PointCloud2 publisher
         cloud2_pub = node_->create_publisher<sensor_msgs::msg::PointCloud2>(curr_scan_topic + "_PointCloud2", 10);
         // CustomMsg publisher
-        custom_pub = node_->create_publisher<livox_ros_driver2::msg::CustomMsg>(curr_scan_topic, 10);
+        custom_pub = node_->create_publisher<livox_interfaces::msg::CustomMsg>(curr_scan_topic, 10);
 
         scanPub = node->Advertise<msgs::LaserScanStamped>(curr_scan_topic+"laserscan", 50);
 
@@ -139,7 +139,7 @@ namespace gazebo
         InitializeScan(scan);
 
         // Create a custom message pp_livox for publishing Livox CustomMsg type messages
-        livox_ros_driver2::msg::CustomMsg pp_livox;
+        livox_interfaces::msg::CustomMsg pp_livox;
         pp_livox.header.stamp = node_->get_clock()->now();
         pp_livox.header.frame_id = raySensor->Name();
         int count = 0;
@@ -175,7 +175,7 @@ namespace gazebo
             auto point = range * axis;
 
             // Fill the CustomMsg point cloud message
-            livox_ros_driver2::msg::CustomPoint p;
+            livox_interfaces::msg::CustomPoint p;
             p.x = point.X();
             p.y = point.Y();
             p.z = point.Z();

@@ -26,7 +26,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
-find_package(livox_ros_driver2 REQUIRED)
+find_package(livox_ros2_driver REQUIRED)
 find_package(Boost REQUIRED COMPONENTS chrono)
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -48,7 +48,7 @@ install(DIRECTORY include/
 
 add_library(ros2_livox SHARED src/livox_points_plugin.cpp src/livox_ode_multiray_shape.cpp)
 target_link_libraries(ros2_livox ${GAZEBO_LIBRARIES} RayPlugin GpuRayPlugin)
-ament_target_dependencies(ros2_livox rclcpp std_msgs sensor_msgs geometry_msgs gazebo_dev gazebo_ros tf2_ros livox_ros_driver2 )
+ament_target_dependencies(ros2_livox rclcpp std_msgs sensor_msgs geometry_msgs gazebo_dev gazebo_ros tf2_ros livox_ros2_driver )
 target_link_libraries(ros2_livox libprotobuf.so.9)
 target_link_libraries(ros2_livox libboost_chrono.so.1.71.0)
 target_include_directories(ros2_livox PRIVATE include)

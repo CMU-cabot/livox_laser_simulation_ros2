@@ -4,7 +4,7 @@ This is a ros2 port of the original repo: https://github.com/Livox-SDK/livox_las
 Tested in ros2 foxy and humble.
 
 In this simulation project, Livox series lidars will  publish two types of messages: 
-> livox_ros_driver2/msg/CustomMsg </br>
+> livox_interfaces/msg/CustomMsg </br>
 > sensor_msgs/msg/PointCloud2
 
 Therefore, by subscribing to the `CustomMsg` message, you can use the FAST_LIO algorithm in the your simulation.
@@ -18,7 +18,7 @@ Therefore, by subscribing to the `CustomMsg` message, you can use the FAST_LIO a
     git clone https://github.com/LihanChen2004/livox_laser_simulation_ros2.git
     ```
 
-2. Follow [livox_ros_driver2 Installation](https://github.com/Livox-SDK/livox_ros_driver2)
+2. Follow [livox_ros2_driver Installation](https://github.com/Livox-SDK/livox_ros2_driver)
 
 3. build your ros2 workspace (if there are warnings that do not allow the compilation, run the build again and you will see that the error disappears)
 
