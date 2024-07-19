@@ -44,9 +44,8 @@
     <gazebo reference="${name}">
       <sensor type="ray" name="${name}">
         <pose>0 0 0 0 0 0</pose>
-        <visualize>true</visualize>
+        <visualize>false</visualize>
         <update_rate>10</update_rate>
-        <!-- This ray plgin is only for visualization. -->
         <plugin name="${name}_plugin" filename="libros2_livox.so">
 			<ray>
 			  <scan>
@@ -74,7 +73,6 @@
 				<stddev>0.01</stddev>
 			  </noise>
 			</ray>
-          <visualize>false</visualize>
 		  <samples>${samples}</samples>
 		  <downsample>1</downsample>
 		  <csv_file_name>$(find ros2_livox_simulation)/scan_mode/mid70.csv</csv_file_name>

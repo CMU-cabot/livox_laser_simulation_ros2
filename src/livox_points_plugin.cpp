@@ -4,6 +4,7 @@
 
 #include <gazebo/physics/Model.hh>
 #include <gazebo/physics/MultiRayShape.hh>// Store the latest laser scans into laserMsg
+#include <gazebo/physics/physics.hh>
 #include <gazebo/physics/PhysicsEngine.hh>
 #include <gazebo/physics/World.hh>
 #include <gazebo/sensors/RaySensor.hh>
@@ -58,8 +59,10 @@ namespace gazebo
         auto scanElem = rayElem->GetElement("scan");
         auto rangeElem = rayElem->GetElement("range");
 
-
-        raySensor = _parent;
+        this->raySensor = std::dynamic_pointer_cast<sensors::RaySensor>(_parent);
+        if (!this->raySensor)
+            gzthrow("LivoxPointsPlugin requires a Ray Sensor as its parent");
+        this->world = physics::get_world(this->raySensor->WorldName());
         auto sensor_pose = raySensor->Pose();
         auto curr_scan_topic = sdf->Get<std::string>("topic");
         RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "ros topic name: %s", curr_scan_topic.c_str());
@@ -83,7 +86,6 @@ namespace gazebo
         RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "scan info size: %ld", aviaInfos.size());
         maxPointSize = aviaInfos.size();
 
-        RayPlugin::Load(_parent, sdfPtr);
         laserMsg.mutable_scan()->set_frame(_parent->ParentName());
         // parentEntity = world->GetEntity(_parent->ParentName());
         parentEntity = this->world->EntityByName(_parent->ParentName());
@@ -121,9 +123,11 @@ namespace gazebo
             end_point = maxDist * axis + offset.Pos();
             rayShape->AddRay(start_point, end_point);
         }
+
+        sub_ = node->Subscribe(raySensor->Topic(), &LivoxPointsPlugin::OnNewLaserScans, this);
     }
 
-    void LivoxPointsPlugin::OnNewLaserScans()
+    void LivoxPointsPlugin::OnNewLaserScans(const ConstLaserScanStampedPtr &_msg)
 {
     // Check if rayShape has been initialized
     if (rayShape)

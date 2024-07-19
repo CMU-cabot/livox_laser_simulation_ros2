@@ -5,7 +5,7 @@
 #ifndef SRC_GAZEBO_LIVOX_POINTS_PLUGIN_H
 #define SRC_GAZEBO_LIVOX_POINTS_PLUGIN_H
 
-#include <gazebo/plugins/RayPlugin.hh>
+#include <gazebo/common/Plugin.hh>
 #include "livox_ode_multiray_shape.h"
 #include <gazebo_ros/node.hpp>
 #include <gazebo/gazebo.hh>
@@ -25,7 +25,7 @@ namespace gazebo
    };
 
 
-   class LivoxPointsPlugin : public RayPlugin
+   class LivoxPointsPlugin : public SensorPlugin
    {
    public:
       LivoxPointsPlugin();
@@ -80,7 +80,7 @@ namespace gazebo
       double VerticalAngleResolution() const;
 
    protected:
-      virtual void OnNewLaserScans();
+      virtual void OnNewLaserScans(const ConstLaserScanStampedPtr &_msg);
 
    private:
       void InitializeRays(std::vector<std::pair<int, AviaRotateInfo>> &points_pair,
@@ -90,6 +90,10 @@ namespace gazebo
 
       void SendRosTf(const ignition::math::Pose3d &pose, const std::string &father_frame, const std::string &child_frame);
 
+      gazebo::sensors::RaySensorPtr raySensor;
+      physics::WorldPtr world;
+      gazebo::transport::SubscriberPtr sub_;
+
       boost::shared_ptr<physics::LivoxOdeMultiRayShape> rayShape;
       gazebo::physics::CollisionPtr laserCollision;
       physics::EntityPtr parentEntity;
@@ -98,13 +102,12 @@ namespace gazebo
       sdf::ElementPtr sdfPtr;
       transport::NodePtr node;
       msgs::LaserScanStamped laserMsg;
-      gazebo::sensors::SensorPtr raySensor;
       std::vector<AviaRotateInfo> aviaInfos;
 
       gazebo_ros::Node::SharedPtr node_;
       rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud2_pub;
       rclcpp::Publisher<livox_interfaces::msg::CustomMsg>::SharedPtr custom_pub;
-      
+
       std::string parent_name;
       std::string child_name;
       int64_t samplesStep = 0;
