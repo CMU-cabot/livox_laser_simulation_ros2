@@ -32,6 +32,9 @@
         <geometry>
             <box size="${length} ${width} ${height}"/>
         </geometry>
+        <material name="aqua">
+          <color rgba="0.31 0.77 0.83 1" />
+        </material>
   </visual>
 </link>
 
