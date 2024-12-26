@@ -12,7 +12,6 @@
 #include <chrono>
 #include "ros2_livox/livox_points_plugin.h"
 #include "ros2_livox/csv_reader.hpp"
-#include "ros2_livox/livox_ode_multiray_shape.h"
 #include <livox_interfaces/msg/custom_msg.hpp>
 
 namespace gazebo
@@ -55,9 +54,6 @@ namespace gazebo
             return;
         }
         sdfPtr = sdf;
-        auto rayElem = sdfPtr->GetElement("ray");
-        auto scanElem = rayElem->GetElement("scan");
-        auto rangeElem = rayElem->GetElement("range");
 
         this->raySensor = std::dynamic_pointer_cast<sensors::RaySensor>(_parent);
         if (!this->raySensor)
@@ -73,7 +69,7 @@ namespace gazebo
         parent_name = parent_name.substr(delimiter_pos + 2);
 
         node = transport::NodePtr(new transport::Node());
-        node->Init(raySensor->WorldName());
+        node->Init();
         // PointCloud2 publisher
         cloud2_pub = node_->create_publisher<sensor_msgs::msg::PointCloud2>(curr_scan_topic + "_PointCloud2", 10);
         // CustomMsg publisher
@@ -90,13 +86,6 @@ namespace gazebo
         // parentEntity = world->GetEntity(_parent->ParentName());
         parentEntity = this->world->EntityByName(_parent->ParentName());
         //SendRosTf(sensor_pose, raySensor->ParentName(), raySensor->Name());
-        auto physics = world->Physics();
-        laserCollision = physics->CreateCollision("multiray", _parent->ParentName());
-        laserCollision->SetName("ray_sensor_collision");
-        laserCollision->SetRelativePose(_parent->Pose());
-        laserCollision->SetInitialRelativePose(_parent->Pose());
-        rayShape.reset(new gazebo::physics::LivoxOdeMultiRayShape(laserCollision));
-        laserCollision->SetShape(rayShape);
         samplesStep = sdfPtr->Get<int>("samples");
         downSample = sdfPtr->Get<int>("downsample");
         if (downSample < 1)
@@ -105,25 +94,12 @@ namespace gazebo
         }
         RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "sample: %ld", samplesStep);
         RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "downsample: %ld", downSample);
-        rayShape->RayShapes().reserve(samplesStep / downSample);
-        rayShape->Load(sdfPtr);
-        rayShape->Init();
-        minDist = rangeElem->Get<double>("min");
-        maxDist = rangeElem->Get<double>("max");
-        auto offset = laserCollision->RelativePose();
-        ignition::math::Vector3d start_point, end_point;
-        for (int j = 0; j < samplesStep; j += downSample)
-        {
-            int index = j % maxPointSize;
-            auto &rotate_info = aviaInfos[index];
-            ignition::math::Quaterniond ray;
-            ray.Euler(ignition::math::Vector3d(0.0, rotate_info.zenith, rotate_info.azimuth));
-            auto axis = offset.Rot() * ray * ignition::math::Vector3d(1.0, 0.0, 0.0);
-            start_point = minDist * axis + offset.Pos();
-            end_point = maxDist * axis + offset.Pos();
-            rayShape->AddRay(start_point, end_point);
-        }
+        auto rayShape = this->raySensor->LaserShape();
+        this->rayShape = rayShape;
+        minDist = sdfPtr->Get<double>("min_range");
+        maxDist = sdfPtr->Get<double>("max_range");
 
+        updateRays();
         sub_ = node->Subscribe(raySensor->Topic(), &LivoxPointsPlugin::OnNewLaserScans, this);
     }
 
@@ -132,11 +108,6 @@ namespace gazebo
     // Check if rayShape has been initialized
     if (rayShape)
     {
-        std::vector<std::pair<int, AviaRotateInfo>> points_pair;
-        // Initialize ray scan point pairs
-        InitializeRays(points_pair, rayShape);
-        rayShape->Update();
-
         // Create laser scan message and set the timestamp
         msgs::Set(laserMsg.mutable_time(), world->SimTime());
         msgs::LaserScan *scan = laserMsg.mutable_scan();
@@ -154,12 +125,16 @@ namespace gazebo
         cloud.header.stamp = node_->get_clock()->now();
         cloud.header.frame_id = raySensor->Name();
         auto &clouds = cloud.points;
-
+        int ray_index = 0;
         // Iterate over ray scan point pairs
         for (auto &pair : points_pair)
-        {
-            auto range = rayShape->GetRange(pair.first);
-            auto intensity = rayShape->GetRetro(pair.first);
+        {   
+            if (_msg->scan().count() <= ray_index) {
+                break;
+            }
+            auto range = _msg->scan().ranges(ray_index);
+            auto intensity = _msg->scan().intensities(ray_index);
+            ray_index++;
 
             // Handle out-of-range data
             if (range >= RangeMax())
@@ -218,20 +193,21 @@ namespace gazebo
         sensor_msgs::convertPointCloudToPointCloud2(cloud, cloud2);
         cloud2.header = cloud.header;
         cloud2_pub->publish(cloud2);
+
+        updateRays();
     }
 }
 
-    void LivoxPointsPlugin::InitializeRays(std::vector<std::pair<int, AviaRotateInfo>> &points_pair,
-                                           boost::shared_ptr<physics::LivoxOdeMultiRayShape> &ray_shape)
+    void LivoxPointsPlugin::updateRays()
     {
-        auto &rays = ray_shape->RayShapes();
+        points_pair.clear();
         ignition::math::Vector3d start_point, end_point;
         ignition::math::Quaterniond ray;
-        auto offset = laserCollision->RelativePose();
+        auto offset = this->raySensor->Pose();
         int64_t end_index = currStartIndex + samplesStep;
         long unsigned int ray_index = 0;
-        auto ray_size = rays.size();
-        points_pair.reserve(rays.size());
+        auto ray_size = this->rayShape->RayCount();
+        points_pair.reserve(ray_size);
         for (int k = currStartIndex; k < end_index; k += downSample)
         {
             auto index = k % maxPointSize;
@@ -242,7 +218,7 @@ namespace gazebo
             end_point = maxDist * axis + offset.Pos();
             if (ray_index < ray_size)
             {
-                rays[ray_index]->SetPoints(start_point, end_point);
+                this->rayShape->Ray(ray_index)->SetPoints(start_point, end_point);
                 points_pair.emplace_back(ray_index, rotate_info);
             }
             ray_index++;

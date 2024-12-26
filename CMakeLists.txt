@@ -46,7 +46,7 @@ install(DIRECTORY include/
 
 
 
-add_library(ros2_livox SHARED src/livox_points_plugin.cpp src/livox_ode_multiray_shape.cpp)
+add_library(ros2_livox SHARED src/livox_points_plugin.cpp)
 target_link_libraries(ros2_livox ${GAZEBO_LIBRARIES})
 ament_target_dependencies(ros2_livox rclcpp std_msgs sensor_msgs geometry_msgs gazebo_dev gazebo_ros tf2_ros livox_ros2_driver )
 target_link_libraries(ros2_livox libprotobuf.so.9)

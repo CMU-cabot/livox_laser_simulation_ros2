@@ -6,7 +6,6 @@
 #define SRC_GAZEBO_LIVOX_POINTS_PLUGIN_H
 
 #include <gazebo/common/Plugin.hh>
-#include "livox_ode_multiray_shape.h"
 #include <gazebo_ros/node.hpp>
 #include <gazebo/gazebo.hh>
 #include "rclcpp/rclcpp.hpp"
@@ -83,8 +82,7 @@ namespace gazebo
       virtual void OnNewLaserScans(const ConstLaserScanStampedPtr &_msg);
 
    private:
-      void InitializeRays(std::vector<std::pair<int, AviaRotateInfo>> &points_pair,
-                          boost::shared_ptr<physics::LivoxOdeMultiRayShape> &ray_shape);
+      void updateRays();
 
       void InitializeScan(msgs::LaserScan *&scan);
 
@@ -94,9 +92,11 @@ namespace gazebo
       physics::WorldPtr world;
       gazebo::transport::SubscriberPtr sub_;
 
-      boost::shared_ptr<physics::LivoxOdeMultiRayShape> rayShape;
+      boost::shared_ptr<physics::MultiRayShape> rayShape;
+      std::vector<std::pair<int, AviaRotateInfo>> points_pair;
       gazebo::physics::CollisionPtr laserCollision;
       physics::EntityPtr parentEntity;
+
       transport::PublisherPtr scanPub;
 
       sdf::ElementPtr sdfPtr;
