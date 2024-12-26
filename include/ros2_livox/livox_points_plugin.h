@@ -84,7 +84,7 @@ namespace gazebo
 
    private:
       void InitializeRays(std::vector<std::pair<int, AviaRotateInfo>> &points_pair,
-                          boost::shared_ptr<physics::LivoxOdeMultiRayShape> &ray_shape);
+                          boost::shared_ptr<physics::MultiRayShape> &ray_shape);
 
       void InitializeScan(msgs::LaserScan *&scan);
 
@@ -94,9 +94,11 @@ namespace gazebo
       physics::WorldPtr world;
       gazebo::transport::SubscriberPtr sub_;
 
-      boost::shared_ptr<physics::LivoxOdeMultiRayShape> rayShape;
+      boost::shared_ptr<physics::MultiRayShape> rayShape;
+      std::vector<std::pair<int, AviaRotateInfo>> points_pair;
       gazebo::physics::CollisionPtr laserCollision;
       physics::EntityPtr parentEntity;
+
       transport::PublisherPtr scanPub;
 
       sdf::ElementPtr sdfPtr;

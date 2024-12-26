@@ -49,17 +49,43 @@
         <pose>0 0 0 0 0 0</pose>
         <visualize>false</visualize>
         <update_rate>10</update_rate>
-        <plugin name="${name}_plugin" filename="libros2_livox.so">
 			<ray>
 			  <scan>
 				<horizontal>
-				<samples>100</samples>
+				<samples>${samples}</samples>
 				<resolution>1</resolution>
 				<min_angle>${-horizontal_fov/360*M_PI}</min_angle>
 				<max_angle>${horizontal_fov/360*M_PI}</max_angle>
 				</horizontal>
 				<vertical>
-				<samples>50</samples>
+				<samples>1</samples>
+				<resolution>1</resolution>
+				<min_angle>${-vertical_fov/360*M_PI}</min_angle>
+				<max_angle>${vertical_fov/360*M_PI}</max_angle>
+				</vertical>
+			  </scan>
+			  <range>
+				<min>${laser_min_range}</min>
+				<max>${laser_max_range}</max>
+				<resolution>0.002</resolution>
+			  </range>
+			  <noise>
+				<type>gaussian</type>
+				<mean>0.0</mean>
+				<stddev>0.01</stddev>
+			  </noise>
+			</ray>
+        <plugin name="${name}_plugin" filename="libros2_livox.so">
+			<ray>
+			  <scan>
+				<horizontal>
+				<samples>${samples}</samples>
+				<resolution>1</resolution>
+				<min_angle>${-horizontal_fov/360*M_PI}</min_angle>
+				<max_angle>${horizontal_fov/360*M_PI}</max_angle>
+				</horizontal>
+				<vertical>
+				<samples>1</samples>
 				<resolution>1</resolution>
 				<min_angle>${-vertical_fov/360*M_PI}</min_angle>
 				<max_angle>${vertical_fov/360*M_PI}</max_angle>
@@ -86,4 +112,3 @@
   </xacro:macro>
 
 </robot>
-
