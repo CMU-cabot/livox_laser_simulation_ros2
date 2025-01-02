@@ -7,6 +7,7 @@
   <xacro:property name="horizontal_fov" value="70.4" />
   <xacro:property name="vertical_fov" value="70.4" />
   <xacro:property name="samples" value="10000" />
+  <xacro:property name="gpu_samples" value="512" />
   <xacro:property name="downsample" value="1" />
   <xacro:property name="resolution" value="0.002" />
 
@@ -25,7 +26,7 @@
   </xacro:macro>
 
 
-  <xacro:macro name="mid70" params="name:='' parent:= 'base_link' topic:='mid70' *origin ">
+  <xacro:macro name="mid70" params="name:='' parent:= 'base_link' topic:='mid70' *origin gpu:=true">
 
     <link name="${name}">
       <xacro:box_inertia m="${length}" w="${width}" d="${length}" h="${height}" />
@@ -46,45 +47,89 @@
     </joint>
 
     <gazebo reference="${name}">
-      <sensor type="ray" name="${name}">
-        <pose>0 0 0 0 0 0</pose>
-        <visualize>false</visualize>
-        <update_rate>10</update_rate>
-        <ray>
-          <scan>
-            <horizontal>
-              <samples>${samples}</samples>
-              <resolution>1</resolution>
-              <min_angle>${-horizontal_fov/360*M_PI}</min_angle>
-              <max_angle>${horizontal_fov/360*M_PI}</max_angle>
-            </horizontal>
-            <vertical>
-              <samples>1</samples>
-              <resolution>1</resolution>
-              <min_angle>${-vertical_fov/360*M_PI}</min_angle>
-              <max_angle>${vertical_fov/360*M_PI}</max_angle>
-            </vertical>
-          </scan>
-          <range>
-            <min>${laser_min_range}</min>
-            <max>${laser_max_range}</max>
-            <resolution>0.002</resolution>
-          </range>
-          <noise>
-            <type>gaussian</type>
-            <mean>0.0</mean>
-            <stddev>0.01</stddev>
-          </noise>
-        </ray>
-        <plugin name="${name}_plugin" filename="libros2_livox.so">
-          <samples>${samples}</samples>
-          <downsample>${downsample}</downsample>
-          <min_range>${laser_min_range}</min_range>
-          <max_range>${laser_max_range}</max_range>
-          <csv_file_name>$(find ros2_livox_simulation)/scan_mode/mid70.csv</csv_file_name>
-          <topic>${topic}</topic>
-        </plugin>
-      </sensor>
+      <xacro:if value="${gpu}">
+        <sensor type="gpu_ray" name="${name}">
+          <pose>0 0 0 0 0 0</pose>
+          <visualize>false</visualize>
+          <update_rate>10</update_rate>
+          <ray>
+            <scan>
+              <horizontal>
+                <samples>${gpu_samples}</samples>
+                <resolution>1</resolution>
+                <min_angle>${-horizontal_fov/360*M_PI}</min_angle>
+                <max_angle>${horizontal_fov/360*M_PI}</max_angle>
+              </horizontal>
+              <vertical>
+                <samples>${gpu_samples}</samples>
+                <resolution>1</resolution>
+                <min_angle>${-vertical_fov/360*M_PI}</min_angle>
+                <max_angle>${vertical_fov/360*M_PI}</max_angle>
+              </vertical>
+            </scan>
+            <range>
+              <min>${laser_min_range}</min>
+              <max>${laser_max_range}</max>
+              <resolution>0.002</resolution>
+            </range>
+            <noise>
+              <type>gaussian</type>
+              <mean>0.0</mean>
+              <stddev>0.01</stddev>
+            </noise>
+          </ray>
+          <plugin name="${name}_plugin" filename="libros2_livox.so">
+            <samples>${samples}</samples>
+            <grid>${gpu_samples}</grid>
+            <downsample>${downsample}</downsample>
+            <min_range>${laser_min_range}</min_range>
+            <max_range>${laser_max_range}</max_range>
+            <csv_file_name>$(find ros2_livox_simulation)/scan_mode/mid70.csv</csv_file_name>
+            <topic>${topic}</topic>
+          </plugin>
+        </sensor>
+      </xacro:if>
+      <xacro:unless value="${gpu}">
+        <sensor type="ray" name="${name}">
+          <pose>0 0 0 0 0 0</pose>
+          <visualize>false</visualize>
+          <update_rate>10</update_rate>
+          <ray>
+            <scan>
+              <horizontal>
+                <samples>${samples}</samples>
+                <resolution>1</resolution>
+                <min_angle>${-horizontal_fov/360*M_PI}</min_angle>
+                <max_angle>${horizontal_fov/360*M_PI}</max_angle>
+              </horizontal>
+              <vertical>
+                <samples>1</samples>
+                <resolution>1</resolution>
+                <min_angle>${-vertical_fov/360*M_PI}</min_angle>
+                <max_angle>${vertical_fov/360*M_PI}</max_angle>
+              </vertical>
+            </scan>
+            <range>
+              <min>${laser_min_range}</min>
+              <max>${laser_max_range}</max>
+              <resolution>0.002</resolution>
+            </range>
+            <noise>
+              <type>gaussian</type>
+              <mean>0.0</mean>
+              <stddev>0.01</stddev>
+            </noise>
+          </ray>
+          <plugin name="${name}_plugin" filename="libros2_livox.so">
+            <samples>${samples}</samples>
+            <downsample>${downsample}</downsample>
+            <min_range>${laser_min_range}</min_range>
+            <max_range>${laser_max_range}</max_range>
+            <csv_file_name>$(find ros2_livox_simulation)/scan_mode/mid70.csv</csv_file_name>
+            <topic>${topic}</topic>
+          </plugin>
+        </sensor>
+      </xacro:unless>
     </gazebo>
   </xacro:macro>
 

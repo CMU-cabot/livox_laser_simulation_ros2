@@ -89,6 +89,7 @@ namespace gazebo
       void SendRosTf(const ignition::math::Pose3d &pose, const std::string &father_frame, const std::string &child_frame);
 
       gazebo::sensors::RaySensorPtr raySensor;
+      gazebo::sensors::GpuRaySensorPtr gpuRaySensor;
       physics::WorldPtr world;
       gazebo::transport::SubscriberPtr sub_;
 
@@ -110,7 +111,9 @@ namespace gazebo
 
       std::string parent_name;
       std::string child_name;
+      ignition::math::Pose3d offset;
       int64_t samplesStep = 0;
+      int64_t gridSize = 0;
       int64_t currStartIndex = 0;
       int64_t maxPointSize = 1000;
       int64_t downSample = 1;
