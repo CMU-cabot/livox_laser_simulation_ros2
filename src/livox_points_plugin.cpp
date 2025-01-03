@@ -68,7 +68,9 @@ namespace gazebo
             this->world = physics::get_world(this->gpuRaySensor->WorldName());
             this->offset = this->gpuRaySensor->Pose();
             gridSize = sdfPtr->Get<int>("grid");
+            interpolation = sdfPtr->Get<bool>("interpolation");
             RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "grid: %ld", gridSize);
+            RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "interpolation: %d", interpolation);
         }
         else if (this->raySensor)
         {
@@ -140,7 +142,6 @@ namespace gazebo
         cloud.header.stamp = node_->get_clock()->now();
         cloud.header.frame_id = gpuRaySensor->Name();
         auto &clouds = cloud.points;
-        int ray_lindex = 0;
         // Iterate over ray scan point pairs
         for (auto &pair : points_pair)
         {
@@ -152,37 +153,75 @@ namespace gazebo
             auto vertical_angle_min = this->gpuRaySensor->VerticalAngleMin().Radian();
             auto vertical_angle_max = this->gpuRaySensor->VerticalAngleMax().Radian();
             // get grid index of zenith
-            auto vindex = std::clamp((rotate_info.zenith - vertical_angle_min) / (vertical_angle_max - vertical_angle_min) * (gridSize-1), 0.0, gridSize - 1.0);
+            auto vindex = gridSize - 1 - std::clamp((rotate_info.zenith - vertical_angle_min) / (vertical_angle_max - vertical_angle_min) * (gridSize-1), 0.0, gridSize - 1.0);
 
-            double range = 0;
-            double intensity = 0;
-            auto hlindex = (int64_t)hindex;
-            auto vlindex = (int64_t)(gridSize - 1 - vindex);
-            auto ray_index = hlindex + vlindex * gridSize;
-            range = _msg->scan().ranges(ray_index);
-            intensity = _msg->scan().intensities(ray_index);
+            auto get_index = [&](int64_t hindex, int64_t vindex) {
+                return hindex + vindex * gridSize;
+            };
+            auto calc_point = [&](int64_t hindex, int64_t vindex) {
+                int64_t ray_index = get_index(hindex, vindex);
+                double range = _msg->scan().ranges(ray_index);
 
-            auto azimuth = (angle_max - angle_min) * (std::floor(hindex) / (gridSize - 1)) + angle_min;
-            auto zenith = (vertical_angle_max - vertical_angle_min) * (std::floor(vindex) / (gridSize - 1)) + vertical_angle_min;
-            //auto azimuth = rotate_info.azimuth;
-            //auto zenith = rotate_info.zenith;
+                auto azimuth = (angle_max - angle_min) * (std::floor(hindex) / (gridSize - 1)) + angle_min;
+                auto zenith = (vertical_angle_min - vertical_angle_max) * (std::floor(vindex) / (gridSize - 1)) + vertical_angle_max;
 
-            // Handle out-of-range data
-            if (range >= RangeMax())
-            {
-                range = 0;
+                // Handle out-of-range data
+                if (range >= RangeMax())
+                {
+                    range = 0;
+                }
+                else if (range <= RangeMin())
+                {
+                    range = 0;
+                }
+
+                // Calculate point cloud data
+                ignition::math::Quaterniond ray;
+                // rotate
+                ray.Euler(ignition::math::Vector3d(0.0, zenith, azimuth));
+                auto axis = ray * ignition::math::Vector3d(1.0, 0.0, 0.0);
+                auto point = range * axis;
+                return point;
+            };
+
+            auto hindex_0 = (int64_t)hindex;
+            auto vindex_0 = (int64_t)vindex;
+            auto point0 = calc_point(hindex_0, vindex_0);
+            auto intensity = _msg->scan().intensities(get_index(hindex_0, vindex_0));
+
+            auto point = point0;
+
+            if (this->interpolation) {
+                // interpolation with 4 points
+                auto hindex_1 = (int64_t)std::clamp(hindex + 1, 0.0, gridSize - 1.0);
+                auto vindex_1 = (int64_t)std::clamp(vindex + 1, 0.0, gridSize - 1.0);
+                auto point1 = calc_point(hindex_1, vindex_0);
+                auto point2 = calc_point(hindex_1, vindex_1);
+                auto point3 = calc_point(hindex_0, vindex_1);
+
+                if (point0.X() != 0 && point1.X() != 0 && point2.X() != 0 && point3.X() != 0) {
+                    double hr = (hindex_0 == hindex_1) ? 0.5 : (hindex - hindex_0);
+                    double vr = (vindex_0 == vindex_1) ? 0.5 : (vindex - vindex_0);
+
+                    point = (1.0 - hr) * (1.0 - vr) * point0 +
+                            (hr) * (1.0 - vr) * point1 +
+                            (hr) * (vr) * point2 +
+                            (1.0 - hr) * (vr) * point3;
+                }
+                /*
+                if (point.X() > 5) {
+                    RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "point(%f, %f): %f %f %f", hindex, vindex, point.X(), point.Y(), point.Z());
+                    RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "point0(%ld, %ld): %f %f %f", hindex_0, vindex_0, point0.X(), point0.Y(), point0.Z());
+                    RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "point1(%ld, %ld): %f %f %f", hindex_1, vindex_1, point1.X(), point1.Y(), point1.Z());
+                    RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "point2(%ld, %ld): %f %f %f", hindex_2, vindex_2, point2.X(), point2.Y(), point2.Z());
+                    RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "point3(%ld, %ld): %f %f %f", hindex_3, vindex_3, point3.X(), point3.Y(), point3.Z());
+                }
+                if (count == 100){
+                    RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "------------------------------------");
+                }
+                */
             }
-            else if (range <= RangeMin())
-            {
-                range = 0;
-            }
 
-            // Calculate point cloud data
-            ignition::math::Quaterniond ray;
-            // rotate
-            ray.Euler(ignition::math::Vector3d(0.0, zenith, azimuth));
-            auto axis = ray * ignition::math::Vector3d(1.0, 0.0, 0.0);
-            auto point = range * axis;
 
             // Fill the CustomMsg point cloud message
             livox_interfaces::msg::CustomPoint p;

@@ -26,7 +26,7 @@
   </xacro:macro>
 
 
-  <xacro:macro name="mid70" params="name:='' parent:= 'base_link' topic:='mid70' *origin gpu:=true">
+  <xacro:macro name="mid70" params="name:='' parent:= 'base_link' topic:='mid70' *origin gpu:=true interpolation:=true">
 
     <link name="${name}">
       <xacro:box_inertia m="${length}" w="${width}" d="${length}" h="${height}" />
@@ -81,6 +81,7 @@
           <plugin name="${name}_plugin" filename="libros2_livox.so">
             <samples>${samples}</samples>
             <grid>${gpu_samples}</grid>
+            <interpolation>${interpolation}</interpolation>
             <downsample>${downsample}</downsample>
             <min_range>${laser_min_range}</min_range>
             <max_range>${laser_max_range}</max_range>

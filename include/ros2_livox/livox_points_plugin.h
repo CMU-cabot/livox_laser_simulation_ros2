@@ -114,6 +114,7 @@ namespace gazebo
       ignition::math::Pose3d offset;
       int64_t samplesStep = 0;
       int64_t gridSize = 0;
+      bool interpolation = false;
       int64_t currStartIndex = 0;
       int64_t maxPointSize = 1000;
       int64_t downSample = 1;
