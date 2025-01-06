@@ -7,6 +7,7 @@
 #include <gazebo/physics/physics.hh>
 #include <gazebo/physics/PhysicsEngine.hh>
 #include <gazebo/physics/World.hh>
+#include <gazebo/sensors/GpuRaySensor.hh>
 #include <gazebo/sensors/RaySensor.hh>
 #include <gazebo/transport/Node.hh>
 #include <chrono>
@@ -55,21 +56,41 @@ namespace gazebo
         }
         sdfPtr = sdf;
 
+        node = transport::NodePtr(new transport::Node());
+        node->Init();
+
+        // initialize for cpu/gpu ray sensor
+        this->gpuRaySensor = std::dynamic_pointer_cast<sensors::GpuRaySensor>(_parent);
         this->raySensor = std::dynamic_pointer_cast<sensors::RaySensor>(_parent);
-        if (!this->raySensor)
-            gzthrow("LivoxPointsPlugin requires a Ray Sensor as its parent");
-        this->world = physics::get_world(this->raySensor->WorldName());
-        auto sensor_pose = raySensor->Pose();
+        if (this->gpuRaySensor)
+        {
+            RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "LivoxPointsPlugin found gpu ray sensor\n");
+            this->world = physics::get_world(this->gpuRaySensor->WorldName());
+            this->offset = this->gpuRaySensor->Pose();
+            gridSize = sdfPtr->Get<int>("grid");
+            interpolation = sdfPtr->Get<bool>("interpolation");
+            RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "grid: %ld", gridSize);
+            RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "interpolation: %d", interpolation);
+        }
+        else if (this->raySensor)
+        {
+            RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "LivoxPointsPlugin found ray sensor\n");
+            this->world = physics::get_world(this->raySensor->WorldName());
+            this->offset = raySensor->Pose();
+            auto rayShape = this->raySensor->LaserShape();
+            this->rayShape = rayShape;
+        }
+        else
+        {
+            gzthrow("LivoxPointsPlugin requires a RaySensor or GpuRaySensor");
+        }
+
+        this->parentEntity = this->world->EntityByName(_parent->ParentName());
+
+        // Get sensor parameters
         auto curr_scan_topic = sdf->Get<std::string>("topic");
         RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "ros topic name: %s", curr_scan_topic.c_str());
 
-        child_name = raySensor->Name();
-        parent_name = raySensor->ParentName();
-        size_t delimiter_pos = parent_name.find("::");
-        parent_name = parent_name.substr(delimiter_pos + 2);
-
-        node = transport::NodePtr(new transport::Node());
-        node->Init();
         // PointCloud2 publisher
         cloud2_pub = node_->create_publisher<sensor_msgs::msg::PointCloud2>(curr_scan_topic + "_PointCloud2", 10);
         // CustomMsg publisher
@@ -83,30 +104,161 @@ namespace gazebo
         maxPointSize = aviaInfos.size();
 
         laserMsg.mutable_scan()->set_frame(_parent->ParentName());
-        // parentEntity = world->GetEntity(_parent->ParentName());
-        parentEntity = this->world->EntityByName(_parent->ParentName());
-        //SendRosTf(sensor_pose, raySensor->ParentName(), raySensor->Name());
         samplesStep = sdfPtr->Get<int>("samples");
         downSample = sdfPtr->Get<int>("downsample");
+        minDist = sdfPtr->Get<double>("min_range");
+        maxDist = sdfPtr->Get<double>("max_range");
+
         if (downSample < 1)
         {
             downSample = 1;
         }
         RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "sample: %ld", samplesStep);
         RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "downsample: %ld", downSample);
-        auto rayShape = this->raySensor->LaserShape();
-        this->rayShape = rayShape;
-        minDist = sdfPtr->Get<double>("min_range");
-        maxDist = sdfPtr->Get<double>("max_range");
 
         updateRays();
-        sub_ = node->Subscribe(raySensor->Topic(), &LivoxPointsPlugin::OnNewLaserScans, this);
+        sub_ = node->Subscribe(_parent->Topic(), &LivoxPointsPlugin::OnNewLaserScans, this);
     }
 
     void LivoxPointsPlugin::OnNewLaserScans(const ConstLaserScanStampedPtr &_msg)
 {
-    // Check if rayShape has been initialized
-    if (rayShape)
+    // assume gpu ray sensor
+    if (!rayShape && this->gpuRaySensor)
+    {
+        // Create laser scan message and set the timestamp
+        msgs::Set(laserMsg.mutable_time(), world->SimTime());
+        msgs::LaserScan *scan = laserMsg.mutable_scan();
+        InitializeScan(scan);
+
+        // Create a custom message pp_livox for publishing Livox CustomMsg type messages
+        livox_interfaces::msg::CustomMsg pp_livox;
+        pp_livox.header.stamp = node_->get_clock()->now();
+        pp_livox.header.frame_id = gpuRaySensor->Name();
+        int count = 0;
+        boost::chrono::high_resolution_clock::time_point start_time = boost::chrono::high_resolution_clock::now();
+
+        // For publishing PointCloud2 type messages
+        sensor_msgs::msg::PointCloud cloud;
+        cloud.header.stamp = node_->get_clock()->now();
+        cloud.header.frame_id = gpuRaySensor->Name();
+        auto &clouds = cloud.points;
+        // Iterate over ray scan point pairs
+        for (auto &pair : points_pair)
+        {
+            auto rotate_info = pair.second;
+            auto angle_min = this->gpuRaySensor->AngleMin().Radian();
+            auto angle_max = this->gpuRaySensor->AngleMax().Radian();
+            // get grid index of azimuth
+            auto hindex = std::clamp((rotate_info.azimuth - angle_min) / (angle_max - angle_min) * (gridSize-1), 0.0, gridSize - 1.0);
+            auto vertical_angle_min = this->gpuRaySensor->VerticalAngleMin().Radian();
+            auto vertical_angle_max = this->gpuRaySensor->VerticalAngleMax().Radian();
+            // get grid index of zenith
+            auto vindex = gridSize - 1 - std::clamp((rotate_info.zenith - vertical_angle_min) / (vertical_angle_max - vertical_angle_min) * (gridSize-1), 0.0, gridSize - 1.0);
+
+            auto get_index = [&](int64_t hindex, int64_t vindex) {
+                return hindex + vindex * gridSize;
+            };
+            auto calc_point = [&](int64_t hindex, int64_t vindex) {
+                int64_t ray_index = get_index(hindex, vindex);
+                double range = _msg->scan().ranges(ray_index);
+
+                auto azimuth = (angle_max - angle_min) * (std::floor(hindex) / (gridSize - 1)) + angle_min;
+                auto zenith = (vertical_angle_min - vertical_angle_max) * (std::floor(vindex) / (gridSize - 1)) + vertical_angle_max;
+
+                // Handle out-of-range data
+                if (range >= RangeMax())
+                {
+                    range = 0;
+                }
+                else if (range <= RangeMin())
+                {
+                    range = 0;
+                }
+
+                // Calculate point cloud data
+                ignition::math::Quaterniond ray;
+                // rotate
+                ray.Euler(ignition::math::Vector3d(0.0, zenith, azimuth));
+                auto axis = ray * ignition::math::Vector3d(1.0, 0.0, 0.0);
+                auto point = range * axis;
+                return point;
+            };
+
+            auto hindex_0 = (int64_t)hindex;
+            auto vindex_0 = (int64_t)vindex;
+            auto point0 = calc_point(hindex_0, vindex_0);
+            auto intensity = _msg->scan().intensities(get_index(hindex_0, vindex_0));
+
+            auto point = point0;
+
+            if (this->interpolation) {
+                // interpolation with 4 points
+                auto hindex_1 = (int64_t)std::clamp(hindex + 1, 0.0, gridSize - 1.0);
+                auto vindex_1 = (int64_t)std::clamp(vindex + 1, 0.0, gridSize - 1.0);
+                auto point1 = calc_point(hindex_1, vindex_0);
+                auto point2 = calc_point(hindex_1, vindex_1);
+                auto point3 = calc_point(hindex_0, vindex_1);
+
+                if (point0.X() != 0 && point1.X() != 0 && point2.X() != 0 && point3.X() != 0) {
+                    double hr = (hindex_0 == hindex_1) ? 0.5 : (hindex - hindex_0);
+                    double vr = (vindex_0 == vindex_1) ? 0.5 : (vindex - vindex_0);
+
+                    point = (1.0 - hr) * (1.0 - vr) * point0 +
+                            (hr) * (1.0 - vr) * point1 +
+                            (hr) * (vr) * point2 +
+                            (1.0 - hr) * (vr) * point3;
+                }
+                /*
+                if (point.X() > 5) {
+                    RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "point(%f, %f): %f %f %f", hindex, vindex, point.X(), point.Y(), point.Z());
+                    RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "point0(%ld, %ld): %f %f %f", hindex_0, vindex_0, point0.X(), point0.Y(), point0.Z());
+                    RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "point1(%ld, %ld): %f %f %f", hindex_1, vindex_1, point1.X(), point1.Y(), point1.Z());
+                    RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "point2(%ld, %ld): %f %f %f", hindex_2, vindex_2, point2.X(), point2.Y(), point2.Z());
+                    RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "point3(%ld, %ld): %f %f %f", hindex_3, vindex_3, point3.X(), point3.Y(), point3.Z());
+                }
+                if (count == 100){
+                    RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "------------------------------------");
+                }
+                */
+            }
+
+
+            // Fill the CustomMsg point cloud message
+            livox_interfaces::msg::CustomPoint p;
+            p.x = point.X();
+            p.y = point.Y();
+            p.z = point.Z();
+            p.reflectivity = intensity;
+
+            // Fill the PointCloud point cloud message
+            clouds.emplace_back();
+            clouds.back().x = point.X();
+            clouds.back().y = point.Y();
+            clouds.back().z = point.Z();
+
+            // Calculate timestamp offset
+            boost::chrono::high_resolution_clock::time_point end_time = boost::chrono::high_resolution_clock::now();
+            boost::chrono::nanoseconds elapsed_time = boost::chrono::duration_cast<boost::chrono::nanoseconds>(end_time - start_time);
+            p.offset_time = elapsed_time.count();
+
+            // Add point cloud data to the CustomMsg message
+            pp_livox.points.push_back(p);
+            count++;
+        }
+
+        if (scanPub && scanPub->HasConnections()) scanPub->Publish(laserMsg);
+
+        // Set the number of point cloud data and publish the CustomMsg message
+        pp_livox.point_num = count;
+        custom_pub->publish(pp_livox);
+
+        // Publish PointCloud2 type message
+        sensor_msgs::msg::PointCloud2 cloud2;
+        sensor_msgs::convertPointCloudToPointCloud2(cloud, cloud2);
+        cloud2.header = cloud.header;
+        cloud2_pub->publish(cloud2);
+    }
+    else if (rayShape) // assume cpu ray sensor
     {
         // Create laser scan message and set the timestamp
         msgs::Set(laserMsg.mutable_time(), world->SimTime());
@@ -166,12 +318,6 @@ namespace gazebo
             clouds.back().y = point.Y();
             clouds.back().z = point.Z();
 
-            // Fill the PointCloud point cloud message
-            clouds.emplace_back();
-            clouds.back().x = point.X();
-            clouds.back().y = point.Y();
-            clouds.back().z = point.Z();
-
             // Calculate timestamp offset
             boost::chrono::high_resolution_clock::time_point end_time = boost::chrono::high_resolution_clock::now();
             boost::chrono::nanoseconds elapsed_time = boost::chrono::duration_cast<boost::chrono::nanoseconds>(end_time - start_time);
@@ -193,9 +339,9 @@ namespace gazebo
         sensor_msgs::convertPointCloudToPointCloud2(cloud, cloud2);
         cloud2.header = cloud.header;
         cloud2_pub->publish(cloud2);
-
-        updateRays();
     }
+
+    updateRays();
 }
 
     void LivoxPointsPlugin::updateRays()
@@ -203,22 +349,22 @@ namespace gazebo
         points_pair.clear();
         ignition::math::Vector3d start_point, end_point;
         ignition::math::Quaterniond ray;
-        auto offset = this->raySensor->Pose();
         int64_t end_index = currStartIndex + samplesStep;
         long unsigned int ray_index = 0;
-        auto ray_size = this->rayShape->RayCount();
-        points_pair.reserve(ray_size);
+        points_pair.reserve(samplesStep);
         for (int k = currStartIndex; k < end_index; k += downSample)
         {
             auto index = k % maxPointSize;
             auto &rotate_info = aviaInfos[index];
             ray.Euler(ignition::math::Vector3d(0.0, rotate_info.zenith, rotate_info.azimuth));
-            auto axis = offset.Rot() * ray * ignition::math::Vector3d(1.0, 0.0, 0.0);
-            start_point = minDist * axis + offset.Pos();
-            end_point = maxDist * axis + offset.Pos();
-            if (ray_index < ray_size)
+            auto axis = this->offset.Rot() * ray * ignition::math::Vector3d(1.0, 0.0, 0.0);
+            start_point = minDist * axis + this->offset.Pos();
+            end_point = maxDist * axis + this->offset.Pos();
+            if (ray_index < samplesStep)
             {
-                this->rayShape->Ray(ray_index)->SetPoints(start_point, end_point);
+                if (this->rayShape) {
+                    this->rayShape->Ray(ray_index)->SetPoints(start_point, end_point);
+                }
                 points_pair.emplace_back(ray_index, rotate_info);
             }
             ray_index++;
@@ -229,7 +375,7 @@ namespace gazebo
     void LivoxPointsPlugin::InitializeScan(msgs::LaserScan *&scan)
     {
         // Store the latest laser scans into laserMsg
-        msgs::Set(scan->mutable_world_pose(), raySensor->Pose() + parentEntity->WorldPose());
+        msgs::Set(scan->mutable_world_pose(), this->offset + parentEntity->WorldPose());
         scan->set_angle_min(AngleMin().Radian());
         scan->set_angle_max(AngleMax().Radian());
         scan->set_angle_step(AngleResolution());
@@ -263,6 +409,8 @@ namespace gazebo
     {
         if (rayShape)
             return rayShape->MinAngle();
+        else if (this->gpuRaySensor)
+            return this->gpuRaySensor->AngleMin();
         else
             return -1;
     }
@@ -273,6 +421,8 @@ namespace gazebo
         {
             return ignition::math::Angle(rayShape->MaxAngle().Radian());
         }
+        else if (this->gpuRaySensor)
+            return this->gpuRaySensor->AngleMax();
         else
             return -1;
     }
@@ -283,6 +433,8 @@ namespace gazebo
     {
         if (rayShape)
             return rayShape->GetMinRange();
+        else if (this->gpuRaySensor)
+            return this->gpuRaySensor->RangeMin();
         else
             return -1;
     }
@@ -293,6 +445,8 @@ namespace gazebo
     {
         if (rayShape)
             return rayShape->GetMaxRange();
+        else if (this->gpuRaySensor)
+            return this->gpuRaySensor->RangeMax();
         else
             return -1;
     }
@@ -307,6 +461,8 @@ namespace gazebo
     {
         if (rayShape)
             return rayShape->GetResRange();
+        else if (this->gpuRaySensor)
+            return this->gpuRaySensor->RangeResolution();
         else
             return -1;
     }
@@ -317,6 +473,8 @@ namespace gazebo
     {
         if (rayShape)
             return rayShape->GetSampleCount();
+        else if (this->gpuRaySensor)
+            return this->gpuRaySensor->RangeCount();
         else
             return -1;
     }
@@ -327,6 +485,8 @@ namespace gazebo
     {
         if (rayShape)
             return rayShape->GetSampleCount() * rayShape->GetScanResolution();
+        else if (this->gpuRaySensor)
+            return this->gpuRaySensor->RangeCount() * this->gpuRaySensor->RangeResolution();
         else
             return -1;
     }
@@ -337,6 +497,8 @@ namespace gazebo
     {
         if (rayShape)
             return rayShape->GetVerticalSampleCount();
+        else if (this->gpuRaySensor)
+            return this->gpuRaySensor->VerticalRayCount();
         else
             return -1;
     }
@@ -347,6 +509,8 @@ namespace gazebo
     {
         if (rayShape)
             return rayShape->GetVerticalSampleCount() * rayShape->GetVerticalScanResolution();
+        else if (this->gpuRaySensor)
+            return this->gpuRaySensor->VerticalRayCount() * this->gpuRaySensor->RangeResolution();
         else
             return -1;
     }
@@ -357,6 +521,8 @@ namespace gazebo
         {
             return ignition::math::Angle(rayShape->VerticalMinAngle().Radian());
         }
+        else if (this->gpuRaySensor)
+            return -this->gpuRaySensor->VertFOV() / 2;
         else
             return -1;
     }
@@ -367,6 +533,8 @@ namespace gazebo
         {
             return ignition::math::Angle(rayShape->VerticalMaxAngle().Radian());
         }
+        else if (this->gpuRaySensor)
+            return this->gpuRaySensor->VertFOV() / 2;
         else
             return -1;
     }
